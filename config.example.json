@@ -1,11 +1,9 @@
 {
   "hotkey": "f8",
   "record_mode": "toggle",
+  "flow_mode": "combined",
   "stt": {
-    "provider": "api",
-    "api_base_url": "https://api.openai.com/v1",
-    "api_model": "whisper-1",
-    "local_model": "tiny",
+    "local_model": "base",
     "language": "tr"
   },
   "llm": {

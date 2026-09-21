@@ -8,13 +8,15 @@ from tkinter import messagebox, ttk
 from settings import AppSettings, LlmSettings, SttSettings, validate_settings
 from ui_tokens import COLORS, FONT, SPACING
 
-
 FLOW_MODE_LABELS = {
     "Kombine (Yerel Whisper + 9Router LLM)": "combined",
     "Yalnızca Yerel (Ham / Çevrimdışı)": "local_only",
-    "Yalnızca 9Router / API": "api_only",
 }
 FLOW_MODE_NAMES = {mode: label for label, mode in FLOW_MODE_LABELS.items()}
+
+
+def key_visibility(current_show: str) -> tuple[str, str]:
+    return ("", "Gizle") if current_show == "*" else ("*", "Göster")
 
 
 class SettingsViewModel:
@@ -27,13 +29,7 @@ class SettingsViewModel:
             hotkey=values["hotkey"].strip().lower(),
             record_mode=values["record_mode"],
             flow_mode=FLOW_MODE_LABELS[values["flow_mode"]],
-            stt=SttSettings(
-                provider=self.settings.stt.provider,
-                api_base_url=values["stt_url"].strip(),
-                api_model=values["stt_model"].strip(),
-                local_model=values["local_model"],
-                language="tr",
-            ),
+            stt=SttSettings(local_model=values["local_model"], language="tr"),
             llm=LlmSettings(values["llm_url"].strip(), values["llm_model"]),
         )
         return validate_settings(result)
@@ -44,12 +40,9 @@ class AppGui:
         ("Global kısayol", "hotkey", ()),
         ("Kayıt modu", "record_mode", ("toggle", "push_to_talk")),
         ("Çalışma modu", "flow_mode", tuple(FLOW_MODE_LABELS)),
-        ("STT API adresi", "stt_url", ()),
-        ("STT API modeli", "stt_model", ()),
         ("Yerel STT modeli", "local_model", ("tiny", "base")),
         ("9Router adresi", "llm_url", ()),
         ("9Router modeli", "llm_model", ("scout-flash", "ulku")),
-        ("STT API anahtarı", "stt_key", ()),
         ("9Router API anahtarı", "llm_key", ()),
     )
 
@@ -58,10 +51,11 @@ class AppGui:
         self.controller, self.events, self.tray = controller, events, tray
         self.vm = SettingsViewModel(settings)
         self.vars = {}
+        self.widgets = {}
         self.root.title("Ses Yazıcı")
         self.root.configure(bg=COLORS["background"])
-        self.root.geometry("620x610")
-        self.root.minsize(560, 540)
+        self.root.geometry("620x540")
+        self.root.minsize(560, 500)
         self._style()
         self._build(settings)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
@@ -70,33 +64,70 @@ class AppGui:
     def _style(self):
         style = ttk.Style(self.root)
         style.theme_use("clam")
-        style.configure(".", background=COLORS["background"], foreground=COLORS["foreground"], fieldbackground=COLORS["card"], font=FONT)
-        style.configure("TEntry", bordercolor=COLORS["border"], insertcolor=COLORS["foreground"])
-        style.configure("TCombobox", bordercolor=COLORS["border"], arrowsize=14)
-        style.configure("Primary.TButton", background=COLORS["primary"], foreground=COLORS["primary_foreground"], padding=(14, 8))
-        style.map("Primary.TButton", background=[("active", COLORS["primary"]), ("focus", COLORS["primary"])])
+        style.configure(".", background=COLORS["background"], foreground=COLORS["foreground"], font=FONT)
+        style.configure("TEntry", fieldbackground=COLORS["input"], foreground=COLORS["input_foreground"],
+                        bordercolor=COLORS["border"], lightcolor=COLORS["border"], darkcolor=COLORS["border"],
+                        insertcolor=COLORS["input_foreground"], selectbackground=COLORS["selection"],
+                        selectforeground=COLORS["input_foreground"], padding=6)
+        style.map("TEntry",
+                  fieldbackground=[("disabled", COLORS["card"]), ("focus", COLORS["input"])],
+                  foreground=[("disabled", COLORS["disabled"]), ("focus", COLORS["input_foreground"])],
+                  bordercolor=[("focus", COLORS["focus"]), ("!focus", COLORS["border"])])
+        style.configure("TCombobox", fieldbackground=COLORS["input"], background=COLORS["input"],
+                        foreground=COLORS["input_foreground"], bordercolor=COLORS["border"],
+                        arrowcolor=COLORS["input_foreground"], selectbackground=COLORS["selection"],
+                        selectforeground=COLORS["input_foreground"], padding=6, arrowsize=14)
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", COLORS["input"]), ("focus", COLORS["input"]),
+                                   ("disabled", COLORS["card"])],
+                  foreground=[("readonly", COLORS["input_foreground"]), ("focus", COLORS["input_foreground"]),
+                              ("disabled", COLORS["disabled"])],
+                  bordercolor=[("focus", COLORS["focus"]), ("readonly", COLORS["border"])],
+                  arrowcolor=[("readonly", COLORS["input_foreground"]), ("disabled", COLORS["disabled"])])
+        self.root.option_add("*TCombobox*Listbox.background", COLORS["input"])
+        self.root.option_add("*TCombobox*Listbox.foreground", COLORS["input_foreground"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", COLORS["selection"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", COLORS["input_foreground"])
+        style.configure("Primary.TButton", background=COLORS["primary"], foreground=COLORS["primary_foreground"],
+                        bordercolor=COLORS["primary"], padding=(14, 8))
+        style.map("Primary.TButton", background=[("active", COLORS["primary"]), ("focus", COLORS["primary"])],
+                  bordercolor=[("focus", COLORS["focus"])])
+        style.configure("Secondary.TButton", background=COLORS["secondary"], foreground=COLORS["secondary_foreground"],
+                        bordercolor=COLORS["secondary"], padding=(12, 7))
+        style.map("Secondary.TButton", background=[("active", COLORS["focus"]), ("focus", COLORS["secondary"])],
+                  bordercolor=[("focus", COLORS["primary"])])
         style.configure("Card.TFrame", background=COLORS["card"])
-        style.configure("Card.TLabel", background=COLORS["card"])
+        style.configure("Card.TLabel", background=COLORS["card"], foreground=COLORS["foreground"])
 
     def _build(self, settings):
         card = ttk.Frame(self.root, style="Card.TFrame", padding=SPACING["xl"])
         card.pack(fill="both", expand=True, padx=SPACING["xl"], pady=SPACING["xl"])
-        ttk.Label(card, text="Ses Yazıcı", style="Card.TLabel", font=("Segoe UI Semibold", 16)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(card, text="Ses Yazıcı", style="Card.TLabel", font=("Segoe UI Semibold", 16)).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         defaults = {
             "hotkey": settings.hotkey, "record_mode": settings.record_mode,
-            "flow_mode": FLOW_MODE_NAMES[settings.flow_mode], "stt_url": settings.stt.api_base_url,
-            "stt_model": settings.stt.api_model, "local_model": settings.stt.local_model,
-            "llm_url": settings.llm.base_url, "llm_model": settings.llm.model,
-            "stt_key": "", "llm_key": "",
+            "flow_mode": FLOW_MODE_NAMES[settings.flow_mode], "local_model": settings.stt.local_model,
+            "llm_url": settings.llm.base_url, "llm_model": settings.llm.model, "llm_key": "",
         }
         for row, (label, name, choices) in enumerate(self.FIELD_SPECS, 1):
             ttk.Label(card, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=5)
             var = tk.StringVar(value=defaults[name]); self.vars[name] = var
             if choices:
                 widget = ttk.Combobox(card, textvariable=var, values=choices, state="readonly")
+                widget.grid(row=row, column=1, sticky="ew", pady=5)
+            elif name == "llm_key":
+                key_frame = ttk.Frame(card, style="Card.TFrame")
+                key_frame.grid(row=row, column=1, sticky="ew", pady=5)
+                key_frame.columnconfigure(0, weight=1)
+                widget = ttk.Entry(key_frame, textvariable=var, show="*")
+                widget.grid(row=0, column=0, sticky="ew")
+                self.key_toggle = ttk.Button(key_frame, text="Göster", style="Secondary.TButton",
+                                             command=self.toggle_key_visibility, takefocus=True)
+                self.key_toggle.grid(row=0, column=1, padx=(SPACING["sm"], 0))
             else:
-                widget = ttk.Entry(card, textvariable=var, show="*" if name.endswith("_key") else "")
-            widget.grid(row=row, column=1, sticky="ew", pady=5)
+                widget = ttk.Entry(card, textvariable=var)
+                widget.grid(row=row, column=1, sticky="ew", pady=5)
+            self.widgets[name] = widget
         card.columnconfigure(1, weight=1)
         status_row = len(self.FIELD_SPECS) + 1
         self.status_var = tk.StringVar(value="Hazır")
@@ -104,18 +135,26 @@ class AppGui:
         ttk.Label(card, textvariable=self.status_var, style="Card.TLabel").grid(row=status_row, column=1, sticky="w", pady=(14, 5))
         buttons = ttk.Frame(card, style="Card.TFrame")
         buttons.grid(row=status_row + 1, column=0, columnspan=2, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Test Et", command=self.test_action).pack(side="left", padx=5)
+        ttk.Button(buttons, text="Test Et", style="Secondary.TButton", command=self.test_action).pack(side="left", padx=5)
         ttk.Button(buttons, text="Kaydet", style="Primary.TButton", command=self.save).pack(side="left")
 
-    def values(self): return {name: var.get() for name, var in self.vars.items()}
+    def toggle_key_visibility(self):
+        entry = self.widgets["llm_key"]
+        show, label = key_visibility(str(entry.cget("show")))
+        entry.configure(show=show)
+        self.key_toggle.configure(text=label)
+
+    def values(self):
+        return {name: var.get() for name, var in self.vars.items()}
 
     def save(self):
         try:
-            for field, key in (("stt_key", "stt_api_key"), ("llm_key", "llm_api_key")):
-                value = self.vars[field].get()
-                if value:
-                    self.credentials.set(key, value)
-                    self.vars[field].set("")
+            key_value = self.vars["llm_key"].get()
+            if key_value:
+                self.credentials.set("llm_api_key", key_value)
+                self.vars["llm_key"].set("")
+                if str(self.widgets["llm_key"].cget("show")) != "*":
+                    self.toggle_key_visibility()
             settings = self.vm.build(self.values())
             self.controller.update_settings(settings)
             self.store.save(settings)

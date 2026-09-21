@@ -1,72 +1,56 @@
 from dataclasses import replace
+from pathlib import Path
 
 import httpx
 import pytest
 
 import main
-from settings import AppSettings
+from settings import AppSettings, SttSettings
 
 
 class Credentials:
-    def __init__(self, values=None):
-        self.values = values or {}
-        self.calls = []
-
-    def get(self, name):
-        self.calls.append(name)
-        return self.values.get(name)
+    def __init__(self, values=None): self.values = values or {}; self.calls = []
+    def get(self, name): self.calls.append(name); return self.values.get(name)
 
 
-@pytest.mark.parametrize(
-    "mode,provider,cleaner_expected,key_calls",
-    [
-        ("combined", "local", True, ["llm_api_key"]),
-        ("local_only", "local", False, []),
-        ("api_only", "api", True, ["stt_api_key", "llm_api_key"]),
-    ],
-)
-def test_build_services_selects_mode_and_credentials(monkeypatch, mode, provider, cleaner_expected, key_calls):
-    credentials = Credentials({"stt_api_key": "opaque-stt", "llm_api_key": "opaque-llm"})
-    transcribers = []
-    cleaners = []
-
-    def fake_transcriber(settings, passed_credentials, client):
-        transcribers.append(settings.provider)
-        if settings.provider == "api":
-            assert passed_credentials.get("stt_api_key") == "opaque-stt"
-        return f"{settings.provider}-stt"
-
-    def fake_cleaner(base_url, model, key, client):
-        cleaners.append((base_url, model, key))
-        return "cleaner"
-
+@pytest.mark.parametrize("mode,model,cleaner_expected,key_calls", [
+    ("combined", "base", True, ["llm_api_key"]),
+    ("local_only", "tiny", False, []),
+])
+def test_a2_a4_a5_build_services_is_always_local(monkeypatch, mode, model, cleaner_expected, key_calls):
+    credentials = Credentials({"llm_api_key": "opaque-llm"})
+    transcribers = []; cleaners = []
+    def fake_transcriber(settings): transcribers.append(settings); return "local-stt"
+    def fake_cleaner(base_url, llm_model, key, client):
+        cleaners.append((base_url, llm_model, key)); return "cleaner"
     monkeypatch.setattr(main, "build_transcriber", fake_transcriber)
     monkeypatch.setattr(main, "LlmCleaner", fake_cleaner)
-    settings = replace(AppSettings(), flow_mode=mode)
+    settings = replace(AppSettings(), flow_mode=mode, stt=SttSettings(model, "tr"))
     transcriber, cleaner = main.build_services(settings, credentials, httpx.Client())
-
-    assert transcribers == [provider]
+    assert transcribers == [settings.stt]
+    assert transcriber == "local-stt"
     assert (cleaner is not None) is cleaner_expected
     assert credentials.calls == key_calls
     assert cleaners == ([] if not cleaner_expected else [(settings.llm.base_url, settings.llm.model, "opaque-llm")])
-    assert transcriber == f"{provider}-stt"
 
 
-def test_local_only_creates_no_http_request(monkeypatch):
+def test_a5_local_only_creates_no_key_or_http_request(monkeypatch):
     requests = []
     client = httpx.Client(transport=httpx.MockTransport(lambda request: requests.append(request)))
-    monkeypatch.setattr(main, "build_transcriber", lambda settings, credentials, client: object())
-    transcriber, cleaner = main.build_services(
-        replace(AppSettings(), flow_mode="local_only"), Credentials(), client
-    )
+    monkeypatch.setattr(main, "build_transcriber", lambda settings: object())
+    credentials = Credentials()
+    transcriber, cleaner = main.build_services(replace(AppSettings(), flow_mode="local_only"), credentials, client)
     assert transcriber is not None and cleaner is None
-    assert requests == []
+    assert credentials.calls == [] and requests == []
 
 
-@pytest.mark.parametrize(
-    "mode,values",
-    [("combined", {}), ("api_only", {"stt_api_key": "opaque-stt"})],
-)
-def test_build_services_requires_used_llm_key(mode, values):
+def test_combined_requires_only_llm_key(monkeypatch):
+    monkeypatch.setattr(main, "build_transcriber", lambda settings: object())
     with pytest.raises(RuntimeError, match="9Router API anahtarı"):
-        main.build_services(replace(AppSettings(), flow_mode=mode), Credentials(values), httpx.Client())
+        main.build_services(AppSettings(), Credentials(), httpx.Client())
+
+
+def test_a11_main_keeps_log_and_dialog_failure_contract():
+    source = Path(main.__file__).read_text(encoding="utf-8")
+    assert '"error.log"' in source
+    assert "messagebox.showerror" in source

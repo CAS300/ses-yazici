@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import queue
-from dataclasses import replace
 from pathlib import Path
 import tkinter as tk
 
@@ -15,7 +14,6 @@ from llm_cleaner import LlmCleaner
 from settings import CredentialStore, SettingsStore
 from text_injector import TextInjector
 from transcriber import build_transcriber
-
 
 class TrayAdapter:
     def __init__(self, root, controller):
@@ -48,16 +46,8 @@ class TrayAdapter:
     def stop(self):
         if self.icon: self.icon.stop()
 
-
 def build_services(settings, credentials, client, require_keys: bool = True):
-    provider = "api" if settings.flow_mode == "api_only" else "local"
-    stt_settings = replace(settings.stt, provider=provider)
-    try:
-        transcriber = build_transcriber(stt_settings, credentials, client)
-    except Exception:
-        if require_keys:
-            raise
-        transcriber = None
+    transcriber = build_transcriber(settings.stt)
     if settings.flow_mode == "local_only":
         return transcriber, None
     llm_key = credentials.get("llm_api_key")
@@ -65,10 +55,7 @@ def build_services(settings, credentials, client, require_keys: bool = True):
         if require_keys:
             raise RuntimeError("9Router API anahtarı Windows Credential Manager'da bulunamadı.")
         return transcriber, None
-    return transcriber, LlmCleaner(
-        settings.llm.base_url, settings.llm.model, llm_key, client
-    )
-
+    return transcriber, LlmCleaner(settings.llm.base_url, settings.llm.model, llm_key, client)
 
 def create_app(config_path: Path | None = None):
     config_path = config_path or Path.home() / ".ses-yazici" / "config.json"
@@ -76,20 +63,15 @@ def create_app(config_path: Path | None = None):
     settings = store.load()
     credentials = CredentialStore()
     client = httpx.Client()
-    try:
-        transcriber, cleaner = build_services(settings, credentials, client, require_keys=True)
-    except Exception:
-        transcriber, cleaner = build_services(settings, credentials, client, require_keys=False)
+    transcriber, cleaner = build_services(settings, credentials, client, require_keys=False)
     import keyboard
     import pyperclip
     recorder = AudioRecorder(max_record_seconds=settings.max_record_seconds)
     hotkeys = HotkeyService(keyboard)
     injector = TextInjector(pyperclip, keyboard)
     events = queue.Queue()
-
     def rebuild(new_settings):
         return build_services(new_settings, credentials, client, require_keys=True)
-
     controller = AppController(recorder, transcriber, cleaner, injector, settings,
                                events=events, hotkeys=hotkeys,
                                rebuild_services=rebuild, resources=(client,))
@@ -100,10 +82,9 @@ def create_app(config_path: Path | None = None):
     gui = AppGui(root, settings, store, credentials, controller, events, tray)
     tray.gui = gui
     tray.start()
-    if settings.flow_mode != "local_only" and cleaner is None:
+    if settings.flow_mode == "combined" and cleaner is None:
         gui.status_var.set("Hazır: 9Router anahtarı girip Kaydet'e basın")
     return root, gui
-
 
 def main():
     try:
@@ -116,14 +97,16 @@ def main():
         try:
             root = tk.Tk(); root.withdraw()
             from tkinter import messagebox
-            messagebox.showerror("Ses Yazıcı başlatılamadı", f"{exc}\n\nAyrıntılar error.log dosyasına yazıldı.")
+            messagebox.showerror(
+                "Ses Yazıcı başlatılamadı",
+                f"{exc}\n\nAyrıntılar error.log dosyasına yazıldı.",
+            )
             root.destroy()
         except Exception:
             pass
         return 1
     root.mainloop()
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

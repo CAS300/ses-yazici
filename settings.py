@@ -7,29 +7,21 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-
-FlowMode = Literal["combined", "local_only", "api_only"]
-FLOW_MODES = frozenset({"combined", "local_only", "api_only"})
-
+FlowMode = Literal["combined", "local_only"]
+FLOW_MODES = frozenset({"combined", "local_only"})
 
 class SettingsError(ValueError):
     pass
 
-
 @dataclass(frozen=True)
 class SttSettings:
-    provider: Literal["api", "local"] = "api"
-    api_base_url: str = "https://api.openai.com/v1"
-    api_model: str = "whisper-1"
     local_model: Literal["tiny", "base"] = "base"
     language: str = "tr"
-
 
 @dataclass(frozen=True)
 class LlmSettings:
     base_url: str = "https://router.erensahin.tr/v1"
     model: Literal["scout-flash", "ulku"] = "scout-flash"
-
 
 @dataclass(frozen=True)
 class AppSettings:
@@ -41,7 +33,6 @@ class AppSettings:
     sample_rate: int = 16_000
     max_record_seconds: int = 120
 
-
 def validate_base_url(value: str) -> str:
     value = value.strip().rstrip("/")
     parsed = urlparse(value)
@@ -52,14 +43,12 @@ def validate_base_url(value: str) -> str:
         raise SettingsError("Servis adresi geçersiz.")
     return value
 
-
 def api_url(base_url: str, path: str) -> str:
     base = validate_base_url(base_url)
     suffix = path.lstrip("/")
     if base.endswith("/v1") and suffix.startswith("v1/"):
         suffix = suffix[3:]
     return f"{base}/{suffix}"
-
 
 def validate_settings(settings: AppSettings) -> AppSettings:
     if not settings.hotkey.strip():
@@ -68,8 +57,6 @@ def validate_settings(settings: AppSettings) -> AppSettings:
         raise SettingsError("Kayıt modu geçersiz.")
     if settings.flow_mode not in FLOW_MODES:
         raise SettingsError("Çalışma modu geçersiz.")
-    if settings.stt.provider not in {"api", "local"}:
-        raise SettingsError("STT sağlayıcısı geçersiz.")
     if settings.stt.local_model not in {"tiny", "base"}:
         raise SettingsError("Yerel model tiny veya base olmalıdır.")
     if settings.llm.model not in {"scout-flash", "ulku"}:
@@ -78,12 +65,9 @@ def validate_settings(settings: AppSettings) -> AppSettings:
         raise SettingsError("MVP örnekleme hızı 16000 olmalıdır.")
     if not 1 <= settings.max_record_seconds <= 600:
         raise SettingsError("Maksimum kayıt süresi 1-600 saniye olmalıdır.")
-    if settings.flow_mode == "api_only":
-        validate_base_url(settings.stt.api_base_url)
-    if settings.flow_mode in {"combined", "api_only"}:
+    if settings.flow_mode == "combined":
         validate_base_url(settings.llm.base_url)
     return settings
-
 
 class SettingsStore:
     def __init__(self, path: str | Path):
@@ -94,17 +78,29 @@ class SettingsStore:
             return AppSettings()
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise TypeError("root must be an object")
+            stt_data = data.get("stt", {})
+            llm_data = data.get("llm", {})
+            if not isinstance(stt_data, dict) or not isinstance(llm_data, dict):
+                raise TypeError("settings groups must be objects")
             result = AppSettings(
                 hotkey=data.get("hotkey", "f8"),
                 record_mode=data.get("record_mode", "toggle"),
                 flow_mode=data.get("flow_mode", "combined"),
-                stt=SttSettings(**data.get("stt", {})),
-                llm=LlmSettings(**data.get("llm", {})),
+                stt=SttSettings(
+                    local_model=stt_data.get("local_model", "base"),
+                    language=stt_data.get("language", "tr"),
+                ),
+                llm=LlmSettings(
+                    base_url=llm_data.get("base_url", LlmSettings().base_url),
+                    model=llm_data.get("model", "scout-flash"),
+                ),
                 sample_rate=data.get("sample_rate", 16_000),
                 max_record_seconds=data.get("max_record_seconds", 120),
             )
             return validate_settings(result)
-        except (OSError, json.JSONDecodeError, TypeError, SettingsError) as exc:
+        except (OSError, json.JSONDecodeError, TypeError, AttributeError, SettingsError) as exc:
             raise SettingsError("Ayar dosyası okunamadı veya geçersiz.") from exc
 
     def save(self, settings: AppSettings) -> None:
@@ -121,10 +117,9 @@ class SettingsStore:
             finally:
                 raise SettingsError("Ayarlar güvenli biçimde kaydedilemedi.") from exc
 
-
 class CredentialStore:
     SERVICE = "ses-yazici"
-    ALLOWED = {"stt_api_key", "llm_api_key"}
+    ALLOWED = {"llm_api_key"}
 
     def __init__(self, backend=None):
         if backend is None:
@@ -136,18 +131,18 @@ class CredentialStore:
         if name not in self.ALLOWED:
             raise ValueError("Bilinmeyen credential adı.")
 
-    def get(self, name: Literal["stt_api_key", "llm_api_key"]) -> str | None:
+    def get(self, name: Literal["llm_api_key"]) -> str | None:
         self._check(name)
         return self.backend.get_password(self.SERVICE, name)
 
-    def set(self, name: Literal["stt_api_key", "llm_api_key"], value: str) -> None:
+    def set(self, name: Literal["llm_api_key"], value: str) -> None:
         self._check(name)
         if not value:
             self.delete(name)
             return
         self.backend.set_password(self.SERVICE, name, value)
 
-    def delete(self, name: Literal["stt_api_key", "llm_api_key"]) -> None:
+    def delete(self, name: Literal["llm_api_key"]) -> None:
         self._check(name)
         try:
             self.backend.delete_password(self.SERVICE, name)

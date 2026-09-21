@@ -1,45 +1,44 @@
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
 
-from settings import CredentialStore, SttSettings
-from transcriber import (ApiWhisperTranscriber, LocalWhisperTranscriber,
-                         TranscriptionError, build_transcriber)
+import transcriber
+from settings import SttSettings
+from transcriber import LocalWhisperTranscriber, TranscriptionError, build_transcriber
 
 
-def test_api_multipart_contract_and_parse():
-    captured = {}
-    def handler(request):
-        captured["request"] = request
-        return httpx.Response(200, json={"text": " merhaba   dünya "})
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    result = ApiWhisperTranscriber("https://stt.test/v1", "whisper-1", "opaque", client).transcribe(b"RIFFdata", language="tr")
-    request = captured["request"]; body = request.content
-    assert str(request.url) == "https://stt.test/v1/audio/transcriptions"
-    assert request.headers["authorization"].startswith("Bearer ")
-    assert b'name="model"' in body and b"whisper-1" in body
-    assert b'name="language"' in body and b"tr" in body
-    assert b'filename="recording.wav"' in body and b"audio/wav" in body
-    assert result == "merhaba dünya"
+def test_a2_api_surface_and_dependencies_are_removed():
+    source = Path(transcriber.__file__).read_text(encoding="utf-8")
+    assert not hasattr(transcriber, "ApiWhisperTranscriber")
+    assert "httpx" not in source
+    assert "CredentialStore" not in source
+    assert "stt_api_key" not in source
 
 
-def test_api_error_is_domain_error():
-    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
-    with pytest.raises(TranscriptionError): ApiWhisperTranscriber("https://x.test/v1", "m", "k", client).transcribe(b"x", language="tr")
+def test_a2_factory_is_local_for_each_model():
+    for model in ("tiny", "base"):
+        built = build_transcriber(SttSettings(local_model=model))
+        assert isinstance(built, LocalWhisperTranscriber)
+        assert built.model_name == model
 
 
-def test_local_is_lazy_and_joins_segments(monkeypatch):
+def test_local_is_lazy_joins_segments_and_removes_temp(monkeypatch):
     calls = []
+    paths = []
     class Model:
-        def __init__(self, name, **kw): calls.append(name)
-        def transcribe(self, path, language): return ([SimpleNamespace(text=" Merhaba "), SimpleNamespace(text="dünya")], {})
+        def __init__(self, name, **kw): calls.append((name, kw))
+        def transcribe(self, path, language):
+            paths.append(path)
+            assert Path(path).exists()
+            return ([SimpleNamespace(text=" Merhaba "), SimpleNamespace(text="dünya")], {})
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Model))
     local = LocalWhisperTranscriber("tiny")
     assert calls == []
     assert local.transcribe(b"RIFF", language="tr") == "Merhaba dünya"
-    assert calls == ["tiny"]
+    assert calls == [("tiny", {"device": "cpu", "compute_type": "int8"})]
+    assert paths and not Path(paths[0]).exists()
 
 
 def test_missing_local_extra_is_clear(monkeypatch):
@@ -48,5 +47,7 @@ def test_missing_local_extra_is_clear(monkeypatch):
         LocalWhisperTranscriber("base").transcribe(b"RIFF", language="tr")
 
 
-def test_factory_local_requires_no_key():
-    assert isinstance(build_transcriber(SttSettings(provider="local"), object()), LocalWhisperTranscriber)
+@pytest.mark.parametrize("model", ["small", "large"])
+def test_factory_rejects_non_v2_models(model):
+    with pytest.raises(ValueError, match="tiny veya base"):
+        build_transcriber(SttSettings(local_model=model))

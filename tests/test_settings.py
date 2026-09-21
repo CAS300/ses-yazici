@@ -8,65 +8,49 @@ from settings import (AppSettings, CredentialStore, LlmSettings, SettingsError,
                       validate_settings)
 
 
-def test_defaults_and_atomic_round_trip_without_secrets(tmp_path, monkeypatch):
-    path = tmp_path / "config.json"
-    calls = []
-    monkeypatch.setattr("settings.os.replace", lambda a, b: (calls.append((a, b)), __import__("os").rename(a, b))[1])
-    store = SettingsStore(path); store.save(AppSettings())
-    assert calls and store.load() == AppSettings()
-    raw = path.read_text()
-    assert "api_key" not in raw and "secret" not in raw
-
-
-def test_flow_mode_defaults_and_round_trip(tmp_path):
-    settings = AppSettings()
-    assert settings.flow_mode == "combined"
-    assert settings.stt.local_model == "base"
+def test_a1_defaults_modes_models_and_round_trip(tmp_path):
+    defaults = AppSettings()
+    assert defaults.flow_mode == "combined"
+    assert defaults.stt == SttSettings(local_model="base", language="tr")
     path = tmp_path / "config.json"
     store = SettingsStore(path)
-    for mode in ("combined", "local_only", "api_only"):
-        expected = replace(settings, flow_mode=mode)
-        store.save(expected)
-        assert store.load() == expected
-        assert json.loads(path.read_text(encoding="utf-8"))["flow_mode"] == mode
+    for mode in ("combined", "local_only"):
+        for model in ("tiny", "base"):
+            expected = replace(defaults, flow_mode=mode, stt=SttSettings(model, "tr"))
+            store.save(expected)
+            assert store.load() == expected
+    assert set(__import__("settings").FLOW_MODES) == {"combined", "local_only"}
 
 
-def test_legacy_config_without_flow_mode_uses_combined(tmp_path):
+@pytest.mark.parametrize("mode", ["api_only", "invalid"])
+def test_a1_a6_unsupported_modes_are_sanitized(mode, tmp_path):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"hotkey": "f9"}), encoding="utf-8")
-    assert SettingsStore(path).load().flow_mode == "combined"
+    path.write_text(json.dumps({"flow_mode": mode}), encoding="utf-8")
+    with pytest.raises(SettingsError, match="Ayar dosyası okunamadı veya geçersiz"):
+        SettingsStore(path).load()
 
 
-def test_invalid_flow_mode_is_rejected():
-    with pytest.raises(SettingsError, match="Çalışma modu"):
-        validate_settings(replace(AppSettings(), flow_mode="invalid"))
+def test_a6_legacy_stt_api_fields_are_ignored_then_removed(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "flow_mode": "combined",
+        "stt": {"provider": "api", "api_base_url": "not-a-url", "api_model": "whisper-1",
+                "local_model": "tiny", "language": "tr"},
+    }), encoding="utf-8")
+    store = SettingsStore(path)
+    loaded = store.load()
+    assert loaded.stt == SttSettings(local_model="tiny", language="tr")
+    store.save(loaded)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["stt"] == {"local_model": "tiny", "language": "tr"}
 
 
-@pytest.mark.parametrize("mode,invalid_stt,invalid_llm,valid", [
-    ("local_only", True, True, True),
-    ("combined", True, False, True),
-    ("combined", False, True, False),
-    ("api_only", True, False, False),
-    ("api_only", False, True, False),
-    ("api_only", False, False, True),
-])
-def test_url_validation_depends_on_flow_mode(mode, invalid_stt, invalid_llm, valid):
-    settings = replace(
-        AppSettings(),
-        flow_mode=mode,
-        stt=replace(AppSettings().stt, api_base_url="http://remote.test" if invalid_stt else "https://stt.test"),
-        llm=replace(AppSettings().llm, base_url="http://remote.test" if invalid_llm else "https://llm.test"),
-    )
-    if valid:
-        assert validate_settings(settings) == settings
-    else:
-        with pytest.raises(SettingsError):
-            validate_settings(settings)
-
-
-def test_invalid_json_has_domain_error(tmp_path):
-    path = tmp_path / "config.json"; path.write_text("{")
+def test_invalid_json_and_invalid_model_have_domain_error(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("{", encoding="utf-8")
     with pytest.raises(SettingsError): SettingsStore(path).load()
+    with pytest.raises(SettingsError, match="tiny veya base"):
+        validate_settings(replace(AppSettings(), stt=SttSettings(local_model="large")))
 
 
 @pytest.mark.parametrize("url,valid", [
@@ -75,18 +59,16 @@ def test_invalid_json_has_domain_error(tmp_path):
     ("https://user:pass@example.test", False),
 ])
 def test_url_policy(url, valid):
-    if valid: assert validate_base_url(url)
+    if valid:
+        assert validate_base_url(url)
     else:
         with pytest.raises(SettingsError): validate_base_url(url)
 
 
-def test_url_join_avoids_double_v1():
+def test_url_join_and_llm_validation():
     assert api_url("https://example.test/v1/", "/v1/chat/completions") == "https://example.test/v1/chat/completions"
-
-
-def test_validation_choices():
-    with pytest.raises(SettingsError): validate_settings(replace(AppSettings(), sample_rate=44_100))
-    with pytest.raises(SettingsError): validate_settings(replace(AppSettings(), llm=LlmSettings(model="bad")))
+    with pytest.raises(SettingsError): validate_settings(replace(AppSettings(), llm=LlmSettings(base_url="http://remote.test")))
+    assert validate_settings(replace(AppSettings(), flow_mode="local_only", llm=LlmSettings(base_url="http://remote.test")))
 
 
 class Keys:
@@ -96,9 +78,12 @@ class Keys:
     def delete_password(self, service, name): self.calls.append(("delete", service, name)); self.values.pop(name, None)
 
 
-def test_credentials_use_keyring_adapter():
+def test_a7_credentials_allow_only_llm_key():
     keys = Keys(); store = CredentialStore(keys)
-    store.set("stt_api_key", "opaque-value")
-    assert store.get("stt_api_key") == "opaque-value"
-    store.delete("stt_api_key")
-    assert [c[0] for c in keys.calls] == ["set", "get", "delete"]
+    assert store.ALLOWED == {"llm_api_key"}
+    store.set("llm_api_key", "opaque-value")
+    assert store.get("llm_api_key") == "opaque-value"
+    store.delete("llm_api_key")
+    with pytest.raises(ValueError): store.get("stt_api_key")
+    with pytest.raises(ValueError): store.set("stt_api_key", "opaque")
+    assert [call[2] for call in keys.calls] == ["llm_api_key"] * 3

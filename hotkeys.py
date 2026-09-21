@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-
 class HotkeyError(RuntimeError):
     pass
-
 
 class HotkeyService:
     def __init__(self, backend=None):
@@ -23,30 +21,42 @@ class HotkeyService:
             raise HotkeyError("Kısayol veya kayıt modu geçersiz.")
         old = (self._registration, list(self._handles))
         new_handles = []
+
+        def down(_event=None):
+            if self._pressed:
+                return
+            self._pressed = True
+            if mode == "push_to_talk" and self._active:
+                return
+            callback = on_stop if mode == "toggle" and self._active else on_start
+            try:
+                callback()
+            except Exception:
+                # Callback hata verse bile tuş fiziksel olarak bırakılana kadar _pressed True kalmalı
+                return
+            self._active = not self._active if mode == "toggle" else True
+
+        def up(_event=None):
+            if not self._pressed:
+                return
+            self._pressed = False
+            if mode != "push_to_talk" or not self._active:
+                return
+            try:
+                on_stop()
+            except Exception:
+                return
+            self._active = False
+
         try:
-            if mode == "toggle":
-                def toggle():
-                    if self._active:
-                        self._active = False
-                        on_stop()
-                    else:
-                        self._active = True
-                        on_start()
-                new_handles.append(self.backend.add_hotkey(hotkey, toggle, suppress=False, trigger_on_release=False))
-            else:
-                def down(_event=None):
-                    if not self._pressed:
-                        self._pressed = True
-                        on_start()
-                def up(_event=None):
-                    if self._pressed:
-                        self._pressed = False
-                        on_stop()
-                new_handles.append(self.backend.on_press_key(hotkey, down, suppress=False))
-                new_handles.append(self.backend.on_release_key(hotkey, up, suppress=False))
+            new_handles.append(self.backend.on_press_key(hotkey, down, suppress=False))
+            new_handles.append(self.backend.on_release_key(hotkey, up, suppress=False))
         except Exception as exc:
             for handle in new_handles:
-                self.backend.unhook(handle)
+                try:
+                    self.backend.unhook(handle)
+                except Exception:
+                    pass
             self._registration, self._handles = old
             raise HotkeyError("Global kısayol kaydedilemedi.") from exc
         for handle in old[1]:
