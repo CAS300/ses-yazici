@@ -1,0 +1,17 @@
+{
+  "hotkey": "f8",
+  "record_mode": "toggle",
+  "stt": {
+    "provider": "api",
+    "api_base_url": "https://api.openai.com/v1",
+    "api_model": "whisper-1",
+    "local_model": "tiny",
+    "language": "tr"
+  },
+  "llm": {
+    "base_url": "https://router.erensahin.tr/v1",
+    "model": "scout-flash"
+  },
+  "sample_rate": 16000,
+  "max_record_seconds": 120
+}
