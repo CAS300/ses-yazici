@@ -96,12 +96,16 @@ class AppController:
             raw = self.transcriber.transcribe(wav_bytes, language=self.settings.stt.language)
             if not raw.strip():
                 raise RuntimeError("Transkripsiyon boş")
-            self._emit(AppState.CLEANING)
-            cleaned = self.cleaner.clean(raw)
-            if not cleaned.strip():
-                raise RuntimeError("Düzenlenmiş metin boş")
+            output = raw
+            if self.settings.flow_mode != "local_only":
+                if self.cleaner is None:
+                    raise RuntimeError("Temizleme servisi hazır değil")
+                self._emit(AppState.CLEANING)
+                output = self.cleaner.clean(raw)
+                if not output.strip():
+                    raise RuntimeError("Düzenlenmiş metin boş")
             self._emit(AppState.INJECTING)
-            self.injector.paste(cleaned)
+            self.injector.paste(output)
             self._emit(AppState.WRITTEN)
             self._emit(AppState.READY)
         except Exception:

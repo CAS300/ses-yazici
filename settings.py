@@ -8,6 +8,10 @@ from typing import Literal
 from urllib.parse import urlparse
 
 
+FlowMode = Literal["combined", "local_only", "api_only"]
+FLOW_MODES = frozenset({"combined", "local_only", "api_only"})
+
+
 class SettingsError(ValueError):
     pass
 
@@ -17,7 +21,7 @@ class SttSettings:
     provider: Literal["api", "local"] = "api"
     api_base_url: str = "https://api.openai.com/v1"
     api_model: str = "whisper-1"
-    local_model: Literal["tiny", "base"] = "tiny"
+    local_model: Literal["tiny", "base"] = "base"
     language: str = "tr"
 
 
@@ -31,6 +35,7 @@ class LlmSettings:
 class AppSettings:
     hotkey: str = "f8"
     record_mode: Literal["toggle", "push_to_talk"] = "toggle"
+    flow_mode: FlowMode = "combined"
     stt: SttSettings = field(default_factory=SttSettings)
     llm: LlmSettings = field(default_factory=LlmSettings)
     sample_rate: int = 16_000
@@ -61,6 +66,8 @@ def validate_settings(settings: AppSettings) -> AppSettings:
         raise SettingsError("Kısayol boş olamaz.")
     if settings.record_mode not in {"toggle", "push_to_talk"}:
         raise SettingsError("Kayıt modu geçersiz.")
+    if settings.flow_mode not in FLOW_MODES:
+        raise SettingsError("Çalışma modu geçersiz.")
     if settings.stt.provider not in {"api", "local"}:
         raise SettingsError("STT sağlayıcısı geçersiz.")
     if settings.stt.local_model not in {"tiny", "base"}:
@@ -71,9 +78,10 @@ def validate_settings(settings: AppSettings) -> AppSettings:
         raise SettingsError("MVP örnekleme hızı 16000 olmalıdır.")
     if not 1 <= settings.max_record_seconds <= 600:
         raise SettingsError("Maksimum kayıt süresi 1-600 saniye olmalıdır.")
-    if settings.stt.provider == "api":
+    if settings.flow_mode == "api_only":
         validate_base_url(settings.stt.api_base_url)
-    validate_base_url(settings.llm.base_url)
+    if settings.flow_mode in {"combined", "api_only"}:
+        validate_base_url(settings.llm.base_url)
     return settings
 
 
@@ -89,6 +97,7 @@ class SettingsStore:
             result = AppSettings(
                 hotkey=data.get("hotkey", "f8"),
                 record_mode=data.get("record_mode", "toggle"),
+                flow_mode=data.get("flow_mode", "combined"),
                 stt=SttSettings(**data.get("stt", {})),
                 llm=LlmSettings(**data.get("llm", {})),
                 sample_rate=data.get("sample_rate", 16_000),

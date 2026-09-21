@@ -1,6 +1,14 @@
 # Ses Yazıcı
 
-Windows üzerinde F8 global kısayoluyla mono 16 kHz ses kaydeden, API veya yerel Whisper ile Türkçe metne çeviren, 9Router ile anlamı koruyarak düzenleyen ve odaktaki alana yapıştıran hafif Tkinter uygulaması.
+Windows üzerinde F8 global kısayoluyla mono 16 kHz ses kaydeden, seçilen çalışma akışında Türkçe metne çeviren ve odaktaki alana yapıştıran hafif Tkinter uygulaması.
+
+## Çalışma modları
+
+| Ayardaki seçim | STT | Metin işlemi | Kimlik bilgisi ve ağ |
+|---|---|---|---|
+| Kombine (Yerel Whisper + 9Router LLM) | Yerel Whisper (`base` varsayılan) | Ham transcript 9Router ile temizlenir | Yalnız 9Router anahtarı ve LLM ağı gerekir |
+| Yalnızca Yerel (Ham / Çevrimdışı) | Yerel Whisper | Ham metin karakterleri değiştirilmeden yapıştırılır | Model hazır olduktan sonra API anahtarı veya ağ gerektirmez |
+| Yalnızca 9Router / API | Yapılandırılan STT API | Transcript 9Router ile temizlenir | STT ve 9Router anahtarları ile iki uzak endpoint gerekir |
 
 ## API-only kurulum
 
@@ -11,13 +19,13 @@ Python 3.11+ ve Windows mikrofon izni gerekir.
     pip install -r requirements.txt
     python main.py
 
-İlk açılıştan önce STT ve 9Router anahtarlarını Windows Credential Manager'a uygulamanın ayar ekranından kaydedin. Anahtarlar `config.json` içine yazılmaz. Ayar dosyası `%USERPROFILE%\.ses-yazici\config.json` konumundadır.
+`Yalnızca 9Router / API` için ilk açılıştan önce STT ve 9Router anahtarlarını Windows Credential Manager'a uygulamanın ayar ekranından kaydedin. Kombine mod yalnız 9Router anahtarı ister; yerel mod hiçbir anahtar istemez. Anahtarlar `config.json` içine yazılmaz. Ayar dosyası `%USERPROFILE%\.ses-yazici\config.json` konumundadır.
 
 ## Yerel STT kurulumu
 
     pip install -r requirements-local.txt
 
-Ayar ekranında `local` ve `tiny` veya `base` seçin. İlk kullanım model indirebilir; bu nedenle bağlantı ve disk alanı gerekir. Yerel STT seçilince STT API anahtarı gerekmez. 9Router anahtarı yine gerekir.
+Kombine veya Yalnızca Yerel çalışma modunu ve `tiny` ya da varsayılan `base` modelini seçin. Yerel Whisper ilk kullanımda modeli indirmek için bağlantı ve disk alanı gerektirebilir. Model önceden hazırsa Yalnızca Yerel dikte bütünüyle çevrimdışıdır; STT/LLM API anahtarı veya ağ kullanmaz. Kombine modda yerel STT için anahtar gerekmez, fakat temizleme için 9Router anahtarı ve ağ gerekir.
 
 ## Kullanım: Toggle ve Push-to-Talk
 

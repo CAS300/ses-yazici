@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+from dataclasses import replace
 from pathlib import Path
 import tkinter as tk
 
@@ -47,17 +48,27 @@ class TrayAdapter:
         if self.icon: self.icon.stop()
 
 
+def build_services(settings, credentials, client):
+    provider = "api" if settings.flow_mode == "api_only" else "local"
+    stt_settings = replace(settings.stt, provider=provider)
+    transcriber = build_transcriber(stt_settings, credentials, client)
+    if settings.flow_mode == "local_only":
+        return transcriber, None
+    llm_key = credentials.get("llm_api_key")
+    if not llm_key:
+        raise RuntimeError("9Router API anahtarı Windows Credential Manager'da bulunamadı.")
+    return transcriber, LlmCleaner(
+        settings.llm.base_url, settings.llm.model, llm_key, client
+    )
+
+
 def create_app(config_path: Path | None = None):
     config_path = config_path or Path.home() / ".ses-yazici" / "config.json"
     store = SettingsStore(config_path)
     settings = store.load()
     credentials = CredentialStore()
     client = httpx.Client()
-    transcriber = build_transcriber(settings.stt, credentials, client)
-    llm_key = credentials.get("llm_api_key")
-    if not llm_key:
-        raise RuntimeError("9Router API anahtarı Windows Credential Manager'da bulunamadı.")
-    cleaner = LlmCleaner(settings.llm.base_url, settings.llm.model, llm_key, client)
+    transcriber, cleaner = build_services(settings, credentials, client)
     import keyboard
     import pyperclip
     recorder = AudioRecorder(max_record_seconds=settings.max_record_seconds)
@@ -66,11 +77,7 @@ def create_app(config_path: Path | None = None):
     events = queue.Queue()
 
     def rebuild(new_settings):
-        return (
-            build_transcriber(new_settings.stt, credentials, client),
-            LlmCleaner(new_settings.llm.base_url, new_settings.llm.model,
-                       credentials.get("llm_api_key") or "", client),
-        )
+        return build_services(new_settings, credentials, client)
 
     controller = AppController(recorder, transcriber, cleaner, injector, settings,
                                events=events, hotkeys=hotkeys,

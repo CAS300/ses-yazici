@@ -1,5 +1,8 @@
 import queue
+from dataclasses import replace
 from types import SimpleNamespace
+
+import pytest
 
 from audio_recorder import AudioClip
 from controller import AppController, AppState
@@ -22,13 +25,16 @@ class Stt:
         if self.error: raise RuntimeError("secret detail")
         return self.text
 class Cleaner:
-    def __init__(self,error=False): self.error=error
+    def __init__(self,error=False): self.error=error; self.calls=[]
     def clean(self,text):
+        self.calls.append(text)
         if self.error: raise RuntimeError("private transcript")
         return "clean"
 class Injector:
-    def __init__(self): self.calls=[]
-    def paste(self,text): self.calls.append(text)
+    def __init__(self,error=False): self.calls=[]; self.error=error
+    def paste(self,text):
+        self.calls.append(text)
+        if self.error: raise RuntimeError("paste detail")
 class Hotkeys:
     def __init__(self): self.unregisters=0
     def unregister(self): self.unregisters+=1
@@ -38,27 +44,71 @@ class Resource:
     def close(self): self.closes+=1
 
 
-def make(**kw):
+def make(mode="combined", **kw):
     parts=dict(recorder=Recorder(), transcriber=Stt(), cleaner=Cleaner(), injector=Injector())
     parts.update(kw); events=queue.Queue()
-    c=AppController(**parts, settings=AppSettings(), events=events, thread_factory=ImmediateThread)
+    settings = replace(AppSettings(), flow_mode=mode)
+    c=AppController(**parts, settings=settings, events=events, thread_factory=ImmediateThread)
     events.get()
     return c,parts,events
 
 
-def test_happy_path_state_trace_and_call_order():
-    c,p,e=make(); c.start_recording(); c.start_recording(); c.stop_recording()
-    assert p["recorder"].starts == 1 and p["injector"].calls == ["clean"]
+def run_pipeline(controller, events):
+    controller.start_recording(); controller.stop_recording()
+    states=[]
+    while not events.empty(): states.append(events.get().state)
+    return states
+
+
+@pytest.mark.parametrize("mode", ["combined", "api_only"])
+def test_remote_modes_clean_once_and_state_trace(mode):
+    c,p,e=make(mode); c.start_recording(); c.start_recording(); c.stop_recording()
+    assert p["recorder"].starts == 1
+    assert p["cleaner"].calls == ["raw"] and p["injector"].calls == ["clean"]
     states=[]
     while not e.empty(): states.append(e.get().state)
     assert states == [AppState.LISTENING,AppState.TRANSCRIBING,AppState.CLEANING,AppState.INJECTING,AppState.WRITTEN,AppState.READY]
 
 
-def test_stt_or_cleaner_error_never_pastes():
-    for args in ({"transcriber":Stt(error=True)},{"cleaner":Cleaner(error=True)},{"transcriber":Stt(text=" ")}):
-        c,p,e=make(**args); c.start_recording(); c.stop_recording()
-        assert p["injector"].calls == [] and c.state == AppState.ERROR
-        assert "secret" not in e.get().message if not e.empty() else True
+def test_local_only_preserves_raw_and_skips_cleaning():
+    raw = "  şey, merhaba!  \n"
+    cleaner = Cleaner()
+    c,p,e=make("local_only", transcriber=Stt(text=raw), cleaner=cleaner)
+    states = run_pipeline(c, e)
+    assert cleaner.calls == []
+    assert p["injector"].calls == [raw]
+    assert states == [AppState.LISTENING,AppState.TRANSCRIBING,AppState.INJECTING,AppState.WRITTEN,AppState.READY]
+
+
+def test_missing_cleaner_in_remote_mode_is_sanitized_error():
+    c,p,e=make("combined", cleaner=None)
+    states = run_pipeline(c, e)
+    assert p["injector"].calls == [] and c.state == AppState.ERROR
+    assert states[-1] == AppState.ERROR
+
+
+@pytest.mark.parametrize("parts", [
+    {"transcriber": Stt(error=True)},
+    {"cleaner": Cleaner(error=True)},
+    {"transcriber": Stt(text=" ")},
+    {"injector": Injector(error=True)},
+])
+def test_service_errors_do_not_report_success_or_leak_details(parts):
+    c,p,e=make(**parts)
+    states = run_pipeline(c, e)
+    messages = []
+    while not e.empty(): messages.append(e.get().message)
+    assert c.state == AppState.ERROR
+    assert AppState.WRITTEN not in states
+    if not isinstance(parts.get("injector"), Injector) or not parts.get("injector").error:
+        assert p["injector"].calls == []
+    assert all(detail not in " ".join(messages) for detail in ("secret detail", "private transcript", "paste detail"))
+
+
+def test_local_only_blank_transcript_does_not_paste():
+    c,p,e=make("local_only", transcriber=Stt(text=" \n"))
+    run_pipeline(c, e)
+    assert p["injector"].calls == [] and c.state == AppState.ERROR
 
 
 def test_shutdown_closes_resources():

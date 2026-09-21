@@ -9,6 +9,14 @@ from settings import AppSettings, LlmSettings, SttSettings, validate_settings
 from ui_tokens import COLORS, FONT, SPACING
 
 
+FLOW_MODE_LABELS = {
+    "Kombine (Yerel Whisper + 9Router LLM)": "combined",
+    "Yalnızca Yerel (Ham / Çevrimdışı)": "local_only",
+    "Yalnızca 9Router / API": "api_only",
+}
+FLOW_MODE_NAMES = {mode: label for label, mode in FLOW_MODE_LABELS.items()}
+
+
 class SettingsViewModel:
     def __init__(self, settings: AppSettings):
         self.settings = settings
@@ -18,8 +26,9 @@ class SettingsViewModel:
             self.settings,
             hotkey=values["hotkey"].strip().lower(),
             record_mode=values["record_mode"],
+            flow_mode=FLOW_MODE_LABELS[values["flow_mode"]],
             stt=SttSettings(
-                provider=values["stt_provider"],
+                provider=self.settings.stt.provider,
                 api_base_url=values["stt_url"].strip(),
                 api_model=values["stt_model"].strip(),
                 local_model=values["local_model"],
@@ -34,7 +43,7 @@ class AppGui:
     FIELD_SPECS = (
         ("Global kısayol", "hotkey", ()),
         ("Kayıt modu", "record_mode", ("toggle", "push_to_talk")),
-        ("STT sağlayıcısı", "stt_provider", ("api", "local")),
+        ("Çalışma modu", "flow_mode", tuple(FLOW_MODE_LABELS)),
         ("STT API adresi", "stt_url", ()),
         ("STT API modeli", "stt_model", ()),
         ("Yerel STT modeli", "local_model", ("tiny", "base")),
@@ -75,7 +84,7 @@ class AppGui:
         ttk.Label(card, text="Ses Yazıcı", style="Card.TLabel", font=("Segoe UI Semibold", 16)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         defaults = {
             "hotkey": settings.hotkey, "record_mode": settings.record_mode,
-            "stt_provider": settings.stt.provider, "stt_url": settings.stt.api_base_url,
+            "flow_mode": FLOW_MODE_NAMES[settings.flow_mode], "stt_url": settings.stt.api_base_url,
             "stt_model": settings.stt.api_model, "local_model": settings.stt.local_model,
             "llm_url": settings.llm.base_url, "llm_model": settings.llm.model,
             "stt_key": "", "llm_key": "",
@@ -89,11 +98,12 @@ class AppGui:
                 widget = ttk.Entry(card, textvariable=var, show="*" if name.endswith("_key") else "")
             widget.grid(row=row, column=1, sticky="ew", pady=5)
         card.columnconfigure(1, weight=1)
+        status_row = len(self.FIELD_SPECS) + 1
         self.status_var = tk.StringVar(value="Hazır")
-        ttk.Label(card, text="Durum", style="Card.TLabel").grid(row=11, column=0, sticky="w", pady=(14, 5))
-        ttk.Label(card, textvariable=self.status_var, style="Card.TLabel").grid(row=11, column=1, sticky="w", pady=(14, 5))
+        ttk.Label(card, text="Durum", style="Card.TLabel").grid(row=status_row, column=0, sticky="w", pady=(14, 5))
+        ttk.Label(card, textvariable=self.status_var, style="Card.TLabel").grid(row=status_row, column=1, sticky="w", pady=(14, 5))
         buttons = ttk.Frame(card, style="Card.TFrame")
-        buttons.grid(row=12, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        buttons.grid(row=status_row + 1, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Test Et", command=self.test_action).pack(side="left", padx=5)
         ttk.Button(buttons, text="Kaydet", style="Primary.TButton", command=self.save).pack(side="left")
 
