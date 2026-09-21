@@ -35,6 +35,7 @@ class LlmCleaner:
         payload = {
             "model": self.model,
             "temperature": 0,
+            "stream": False,
             "messages": [
                 {"role": "system", "content": DICTATION_SYSTEM_PROMPT},
                 {"role": "user", "content": raw_text},
@@ -50,7 +51,36 @@ class LlmCleaner:
                 timeout=45.0,
             )
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            content = None
+            # Önce normal JSON yanıtı dene
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                try:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
+                except Exception:
+                    pass
+            # Yanıt text/event-stream veya SSE formatında gelmişse chunk'ları toparla
+            if content is None:
+                import json
+                chunks = []
+                for line in response.text.splitlines():
+                    line = line.strip()
+                    if line.startswith("data:") and not line.startswith("data: [DONE]"):
+                        try:
+                            item = json.loads(line[5:].strip())
+                            delta = item["choices"][0].get("delta", {}).get("content", "")
+                            if not delta:
+                                delta = item["choices"][0].get("message", {}).get("content", "")
+                            if delta:
+                                chunks.append(delta)
+                        except Exception:
+                            pass
+                if chunks:
+                    content = "".join(chunks)
+                else:
+                    # Son çare doğrudan json parse
+                    content = response.json()["choices"][0]["message"]["content"]
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             logger.info("LLM temizleme tamamlandı (süre=%.1f ms, dönen_uzunluk=%d)", elapsed_ms, len(content) if isinstance(content, str) else 0)
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
