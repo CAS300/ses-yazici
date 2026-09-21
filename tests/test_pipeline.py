@@ -24,3 +24,65 @@ def test_a4_a5_two_mode_pipeline_trace(mode,raw,cleaned,expected):
         def paste(self,text): trace.append(f"clipboard:{text}")
     c=AppController(R(),S(),None if mode=="local_only" else C(),I(),replace(AppSettings(),flow_mode=mode),events=queue.Queue(),thread_factory=ImmediateThread)
     c.start_recording(); c.stop_recording(); assert trace == expected
+
+
+def test_pipeline_logging_and_secret_redaction(tmp_path):
+    import app_logger
+    from audio_recorder import AudioRecorder
+    from transcriber import Transcriber
+    from llm_cleaner import LlmCleaner
+    from text_injector import TextInjector
+    import httpx
+
+    log_file = tmp_path / "pipeline.log"
+    app_logger.setup_logging(log_path=log_file)
+
+    class MockStream:
+        def __init__(self, callback): self.callback = callback
+        def start(self): self.callback(b"\0\0" * 100, 100, None, None)
+        def stop(self): pass
+        def close(self): pass
+
+    recorder = AudioRecorder(stream_factory=lambda **kw: MockStream(kw["callback"]))
+    
+    class MockTranscriber:
+        model_name = "base"
+        def transcribe(self, wav_bytes, language):
+            app_logger.get_logger("transcriber").info("Transkripsiyon tamamlandı (metin=merhaba)")
+            return "merhaba dünya sesli dikte"
+
+    SECRET_KEY = "sk-9router-super-secret-key-999"
+    
+    def handler(request: httpx.Request):
+        assert f"Bearer {SECRET_KEY}" in request.headers["Authorization"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Merhaba dünya sesli dikte."}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    cleaner = LlmCleaner(base_url="https://router.erensahin.tr/v1", model="scout-flash", api_key=SECRET_KEY, client=client)
+
+    class MockClip:
+        def __init__(self): self.val = ""
+        def paste(self): return self.val
+        def copy(self, v): self.val = v
+    class MockKey:
+        def send(self, k): pass
+
+    injector = TextInjector(MockClip(), MockKey(), sleep=lambda _: None)
+    controller = AppController(recorder, MockTranscriber(), cleaner, injector, AppSettings(), events=queue.Queue(), thread_factory=ImmediateThread)
+
+    controller.start_recording()
+    controller.stop_recording()
+
+    # Flush handlers
+    import logging
+    for h in logging.getLogger().handlers:
+        h.flush()
+
+    content = log_file.read_text(encoding="utf-8")
+    assert SECRET_KEY not in content
+    assert "Ses kaydı" in content
+    assert "Transkripsiyon" in content
+    assert "LLM temizleme" in content
+    assert "Pipeline" in content
+

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from typing import Protocol
 
+from app_logger import get_logger
 from settings import SttSettings
+
+logger = get_logger("transcriber")
 
 class TranscriptionError(RuntimeError):
     pass
@@ -36,16 +40,21 @@ class LocalWhisperTranscriber:
     def transcribe(self, wav_bytes: bytes, *, language: str) -> str:
         if not wav_bytes:
             raise TranscriptionError("Ses verisi boş.")
+        logger.info("Transkripsiyon başlatılıyor (model=%s, dil=%s, ses_boyutu=%d bayt)", self.model_name, language, len(wav_bytes))
         path = None
+        start_time = time.perf_counter()
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
                 handle.write(wav_bytes)
                 path = handle.name
             segments, _ = self._load().transcribe(path, language=language)
             text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info("Transkripsiyon tamamlandı (süre=%.1f ms, metin_uzunluğu=%d, önizleme='%s')", elapsed_ms, len(text), text[:50])
         except TranscriptionError:
             raise
         except Exception as exc:
+            logger.exception("Yerel transkripsiyon başarısız: %s", exc)
             raise TranscriptionError("Yerel transkripsiyon başarısız.") from exc
         finally:
             if path:

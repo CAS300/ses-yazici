@@ -54,3 +54,10 @@ def test_a11_main_keeps_log_and_dialog_failure_contract():
     source = Path(main.__file__).read_text(encoding="utf-8")
     assert '"error.log"' in source
     assert "messagebox.showerror" in source
+
+
+def test_main_uses_pynput_and_no_keyboard():
+    source = Path(main.__file__).read_text(encoding="utf-8")
+    assert "import keyboard" not in source
+    assert "PynputKeyboardAdapter" in source
+

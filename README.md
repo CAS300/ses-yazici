@@ -1,6 +1,6 @@
 # Ses Yazıcı
 
-Windows üzerinde F8 global kısayoluyla mono 16 kHz ses kaydeden, yerel Whisper ile Türkçe metne çeviren ve odaktaki alana yapıştıran Tkinter uygulaması.
+Windows üzerinde tanımlı global kısayollar (`F8`, `F9`, `F10`, `F12`, `Ctrl+Alt+Space`, `Ctrl+Shift+D`) ile `pynput` tabanlı motor üzerinden mono 16 kHz ses kaydeden, yerel Whisper ile Türkçe metne çeviren ve odaktaki alana yapıştıran Tkinter uygulaması.
 
 ## Çalışma modları
 
@@ -20,24 +20,28 @@ Python 3.11+, Windows mikrofon izni ve yerel Whisper gereklidir.
 
 Yerel model olarak yalnız `tiny` ve varsayılan `base` desteklenir. Yerel Whisper ilk kullanımda modeli indirmek için bağlantı ve disk alanı gerektirebilir. Model hazır olduktan sonra `local_only` dikte yolu ağ kullanmaz.
 
-Normal kullanımda `baslat.bat`, sabit sanal ortamdaki `pythonw.exe` ile terminalsiz başlatır. Başlatma hataları uygulama klasöründeki `error.log` dosyasına yazılır ve bir iletişim kutusuyla bildirilir.
+Normal kullanımda `baslat.bat`, sabit sanal ortamdaki `pythonw.exe` ile terminalsiz başlatır. Başlatma hataları uygulama klasöründeki `error.log` dosyasına yazılır ve bir iletişim kutusuyla bildirilir. Çalışma anı logları ise `app.log` dosyasına debug düzeyinde akar.
 
 ## Anahtar ve veri sınırı
 
-Kombine mod yalnız 9Router LLM anahtarını kullanır. Ayar ekranındaki 9Router anahtarı başlangıçta maskelidir; Göster/Gizle düğmesi değeri değiştirmeden görünürlüğü değiştirir. Anahtar `config.json` içine yazılmaz; keyring üzerinden Windows Credential Manager içinde saklanır.
+Kombine mod yalnız 9Router LLM anahtarını kullanır. Ayar ekranındaki 9Router anahtarı CredentialStore'dan yüklenerek başlangıçta `show="*"` ile maskelenir; Göster/Gizle düğmesi değeri koruyarak görünürlüğü değiştirir. "Kaydet" butonuna basıldığında anahtar kutusu silinmez. Anahtar `config.json` içine yazılmaz; keyring üzerinden Windows Credential Manager içinde güvenle saklanır. Log dosyalarına (`app.log`) API anahtarları asla yazılmaz.
 
 `combined` akışında ses cihazda yerel olarak yazıya çevrilir, yalnız transcript temizleme için 9Router'a gönderilir. `local_only` akışında ses ve transcript uzak servise gönderilmez. Geçici WAV kullanım sonrası silinir; transcript geçmişi tutulmaz.
 
-## Kullanım
+## Kullanım ve Arayüz
 
-Varsayılan F8 ve `toggle` modunda ilk fiziksel basış kaydı başlatır, ikinci basış bitirir. Tuşu basılı tutmaktan doğan tekrarlar yutulur. `push_to_talk` modunda F8 basılıyken kayıt yapılır ve bırakınca bitirilir.
-
-Durum satırı `Hazır`, `Dinleniyor`, `Düzenleniyor`, `Yazıldı` veya `Hata` gösterir. Form alanları ve Göster/Gizle düğmesi Tab ile dolaşılabilir; ttk düğmesi Space/Enter ile çalışır. Tray varsa pencereyi kapatmak gizler; tam çıkış için tray menüsündeki Çıkış kullanılır.
+- **Kısayol Seçimi:** Kısayol, serbest metin yerine readonly Combobox üzerinden seçilir (`F8`, `F9`, `F10`, `F12`, `Ctrl+Alt+Space`, `Ctrl+Shift+D`).
+- **Kayıt Modu:** `toggle` modunda ilk basış kaydı başlatır, ikinci basış bitirir; autorepeat tekrarları yutulur. `push_to_talk` modunda kısayol basılıyken kayıt yapılır ve tuş bırakıldığında sonlandırılır.
+- **Dinamik Buton Geri Bildirimi:** Arayüzdeki "Test Et" butonu kayıt başladığında "Durdur" ve durum metni "Dinleniyor..." olur; kayıt durdurulup işleme geçildiğinde buton "İşleniyor..." (devre dışı) olur; işlem bitince veya hata durumunda tekrar "Test Et" haline döner.
+- **Logları Aç:** Arayüzdeki "Logları Aç" butonu ile `app.log` dosyası sistem editöründe tek tıkla incelenebilir.
+- Durum satırı `Hazır`, `Dinleniyor...`, `Düzenleniyor`, `Yazıldı` veya `Hata` durumlarını yansıtır.
+- Form alanları ve butonlar klavyeyle Tab ile dolaşılabilir; tray simgesi varsa pencereyi kapatmak gizler, tam çıkış için menü kullanılır.
 
 ## Sorun giderme
 
 - Mikrofon açılmıyorsa Windows Ayarlar > Gizlilik ve güvenlik > Mikrofon altında masaüstü uygulama iznini açın.
-- Global kısayol çalışmıyorsa F8 çakışmasını ve uygulama/hedef editör yetki düzeylerini kontrol edin.
+- Global kısayol çalışmıyorsa diğer uygulamalarla kısayol çakışmasını veya uygulama/hedef editör yetki düzeylerini kontrol edin.
+- Ayrıntılı hata teşhisi için arayüzdeki "Logları Aç" butonuna tıklayarak `app.log` dosyasını inceleyin.
 - Yerel backend bulunamazsa aynı ortamda `pip install -r requirements-local.txt` çalıştırın.
 - Kombine temizleme hatasında 9Router adresini, modeli, ağı ve Windows Credential Manager kaydını kontrol edin. Hata halinde metin yapıştırılmaz.
 - Clipboard koruması yalnız text içindir; görsel ve özel formatlar kapsam dışıdır.

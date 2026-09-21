@@ -6,14 +6,17 @@ import tkinter as tk
 
 import httpx
 
+from app_logger import get_logger, setup_logging
 from audio_recorder import AudioRecorder
 from controller import AppController
 from gui import AppGui
 from hotkeys import HotkeyService
 from llm_cleaner import LlmCleaner
 from settings import CredentialStore, SettingsStore
-from text_injector import TextInjector
+from text_injector import PynputKeyboardAdapter, TextInjector
 from transcriber import build_transcriber
+
+logger = get_logger("main")
 
 class TrayAdapter:
     def __init__(self, root, controller):
@@ -58,17 +61,18 @@ def build_services(settings, credentials, client, require_keys: bool = True):
     return transcriber, LlmCleaner(settings.llm.base_url, settings.llm.model, llm_key, client)
 
 def create_app(config_path: Path | None = None):
+    setup_logging()
+    logger.info("Ses Yazıcı başlatılıyor.")
     config_path = config_path or Path.home() / ".ses-yazici" / "config.json"
     store = SettingsStore(config_path)
     settings = store.load()
     credentials = CredentialStore()
     client = httpx.Client()
     transcriber, cleaner = build_services(settings, credentials, client, require_keys=False)
-    import keyboard
     import pyperclip
     recorder = AudioRecorder(max_record_seconds=settings.max_record_seconds)
-    hotkeys = HotkeyService(keyboard)
-    injector = TextInjector(pyperclip, keyboard)
+    hotkeys = HotkeyService()
+    injector = TextInjector(pyperclip, PynputKeyboardAdapter())
     events = queue.Queue()
     def rebuild(new_settings):
         return build_services(new_settings, credentials, client, require_keys=True)

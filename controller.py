@@ -7,7 +7,10 @@ from enum import Enum, auto
 from typing import Callable
 
 from audio_recorder import encode_wav
+from app_logger import get_logger
 from settings import AppSettings
+
+logger = get_logger("controller")
 
 
 class AppState(Enum):
@@ -28,7 +31,7 @@ class StatusEvent:
 
 STATUS_TEXT = {
     AppState.READY: "Hazır",
-    AppState.LISTENING: "Dinleniyor",
+    AppState.LISTENING: "Dinleniyor...",
     AppState.TRANSCRIBING: "Düzenleniyor",
     AppState.CLEANING: "Düzenleniyor",
     AppState.INJECTING: "Düzenleniyor",
@@ -66,6 +69,7 @@ class AppController:
         with self._lock:
             self._state = state
         message = STATUS_TEXT[state] + (f": {detail}" if detail else "")
+        logger.debug("Durum geçişi: %s (%s)", state.name, message)
         self.events.put(StatusEvent(state, message))
 
     def start_recording(self) -> None:
@@ -73,9 +77,11 @@ class AppController:
             if self._shutdown or self._state != AppState.READY:
                 return
             self._state = AppState.LISTENING
+        logger.info("Kayıt başlatılıyor.")
         try:
             self.recorder.start(sample_rate=self.settings.sample_rate, channels=1)
-        except Exception:
+        except Exception as exc:
+            logger.exception("Mikrofon başlatılamadı: %s", exc)
             self._emit(AppState.ERROR, "Mikrofon başlatılamadı")
             return
         self.events.put(StatusEvent(AppState.LISTENING, STATUS_TEXT[AppState.LISTENING]))
@@ -85,12 +91,14 @@ class AppController:
             if self._shutdown or self._state != AppState.LISTENING:
                 return
             self._state = AppState.TRANSCRIBING
+        logger.info("Kayıt durduruldu, pipeline iş parçacığı başlatılıyor.")
         self.events.put(StatusEvent(AppState.TRANSCRIBING, STATUS_TEXT[AppState.TRANSCRIBING]))
         self._worker = self.thread_factory(target=self._pipeline, name="dictation-worker", daemon=True)
         self._worker.start()
 
     def _pipeline(self):
         try:
+            logger.info("Pipeline işleme başladı.")
             clip = self.recorder.stop()
             wav_bytes = encode_wav(clip)
             raw = self.transcriber.transcribe(wav_bytes, language=self.settings.stt.language)
@@ -108,7 +116,9 @@ class AppController:
             self.injector.paste(output)
             self._emit(AppState.WRITTEN)
             self._emit(AppState.READY)
-        except Exception:
+            logger.info("Pipeline başarıyla tamamlandı.")
+        except Exception as exc:
+            logger.exception("Pipeline işleminde hata oluştu: %s", exc)
             self._emit(AppState.ERROR, "İşlem tamamlanamadı; ayarları kontrol edin")
 
     def reset_error(self):

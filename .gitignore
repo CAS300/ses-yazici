@@ -7,3 +7,6 @@ config.json
 models/
 dist/
 build/
+app.log
+error.log
+*.log

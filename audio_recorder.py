@@ -5,6 +5,10 @@ import threading
 import wave
 from dataclasses import dataclass
 
+from app_logger import get_logger
+
+logger = get_logger("audio_recorder")
+
 
 class AudioError(RuntimeError):
     pass
@@ -57,6 +61,7 @@ class AudioRecorder:
             self._channels = channels
             self._max_bytes = sample_rate * channels * 2 * self._max_seconds
             self._recording = True
+        logger.info("Ses kaydı başlatılıyor (sample_rate=%d, channels=%d, max_seconds=%d)", sample_rate, channels, self._max_seconds)
         factory = self._stream_factory
         if factory is None:
             try:
@@ -65,6 +70,7 @@ class AudioRecorder:
             except ImportError as exc:
                 with self._lock:
                     self._recording = False
+                logger.error("Ses sürücüsü bulunamadı: %s", exc)
                 raise AudioError("Ses sürücüsü kurulamadı.") from exc
         try:
             self._stream = factory(samplerate=sample_rate, channels=channels, dtype="int16", callback=self._callback)
@@ -73,6 +79,7 @@ class AudioRecorder:
             with self._lock:
                 self._recording = False
             self._close_stream()
+            logger.exception("Mikrofon akışı başlatılamadı: %s", exc)
             raise AudioError("Mikrofon başlatılamadı.") from exc
 
     def _callback(self, indata, frames, time_info, status) -> None:
@@ -86,6 +93,7 @@ class AudioRecorder:
                 self._frames.append(chunk[:remaining])
             if len(chunk) >= remaining:
                 self._recording = False
+                logger.info("Maksimum kayıt süresine ulaşıldı, kayıt otomatik durduruluyor.")
 
     def stop(self) -> AudioClip:
         with self._lock:
@@ -95,6 +103,8 @@ class AudioRecorder:
             data = b"".join(self._frames)
             self._frames = []
         self._close_stream()
+        duration = len(data) / (self._sample_rate * self._channels * 2) if (self._sample_rate and self._channels) else 0.0
+        logger.info("Ses kaydı durduruldu (toplam %d bayt, %.2f saniye)", len(data), duration)
         return AudioClip(data, self._sample_rate, self._channels)
 
     def cancel(self) -> None:
@@ -102,6 +112,7 @@ class AudioRecorder:
             self._recording = False
             self._frames = []
         self._close_stream()
+        logger.info("Ses kaydı iptal edildi.")
 
     def _close_stream(self) -> None:
         stream, self._stream = self._stream, None

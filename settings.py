@@ -10,8 +10,28 @@ from urllib.parse import urlparse
 FlowMode = Literal["combined", "local_only"]
 FLOW_MODES = frozenset({"combined", "local_only"})
 
+ALLOWED_HOTKEYS = (
+    "F8",
+    "F9",
+    "F10",
+    "F12",
+    "Ctrl+Alt+Space",
+    "Ctrl+Shift+D",
+)
+_HOTKEY_MAP = {k.lower(): k for k in ALLOWED_HOTKEYS}
+
+
 class SettingsError(ValueError):
     pass
+
+
+def normalize_hotkey(hotkey: str) -> str:
+    clean = hotkey.strip()
+    canonical = _HOTKEY_MAP.get(clean.lower())
+    if not canonical:
+        raise SettingsError(f"Kısayol desteklenmiyor. İzin verilenler: {', '.join(ALLOWED_HOTKEYS)}")
+    return canonical
+
 
 @dataclass(frozen=True)
 class SttSettings:
@@ -25,7 +45,7 @@ class LlmSettings:
 
 @dataclass(frozen=True)
 class AppSettings:
-    hotkey: str = "f8"
+    hotkey: str = "F8"
     record_mode: Literal["toggle", "push_to_talk"] = "toggle"
     flow_mode: FlowMode = "combined"
     stt: SttSettings = field(default_factory=SttSettings)
@@ -51,8 +71,10 @@ def api_url(base_url: str, path: str) -> str:
     return f"{base}/{suffix}"
 
 def validate_settings(settings: AppSettings) -> AppSettings:
-    if not settings.hotkey.strip():
-        raise SettingsError("Kısayol boş olamaz.")
+    canonical_hotkey = normalize_hotkey(settings.hotkey)
+    if settings.hotkey != canonical_hotkey:
+        from dataclasses import replace
+        settings = replace(settings, hotkey=canonical_hotkey)
     if settings.record_mode not in {"toggle", "push_to_talk"}:
         raise SettingsError("Kayıt modu geçersiz.")
     if settings.flow_mode not in FLOW_MODES:
@@ -84,8 +106,10 @@ class SettingsStore:
             llm_data = data.get("llm", {})
             if not isinstance(stt_data, dict) or not isinstance(llm_data, dict):
                 raise TypeError("settings groups must be objects")
+            raw_hotkey = data.get("hotkey", "F8")
+            normalized_hotkey = normalize_hotkey(raw_hotkey)
             result = AppSettings(
-                hotkey=data.get("hotkey", "f8"),
+                hotkey=normalized_hotkey,
                 record_mode=data.get("record_mode", "toggle"),
                 flow_mode=data.get("flow_mode", "combined"),
                 stt=SttSettings(

@@ -3,9 +3,9 @@ from dataclasses import replace
 
 import pytest
 
-from settings import (AppSettings, CredentialStore, LlmSettings, SettingsError,
-                      SettingsStore, SttSettings, api_url, validate_base_url,
-                      validate_settings)
+from settings import (ALLOWED_HOTKEYS, AppSettings, CredentialStore, LlmSettings, SettingsError,
+                      SettingsStore, SttSettings, api_url, normalize_hotkey,
+                      validate_base_url, validate_settings)
 
 
 def test_a1_defaults_modes_models_and_round_trip(tmp_path):
@@ -87,3 +87,54 @@ def test_a7_credentials_allow_only_llm_key():
     with pytest.raises(ValueError): store.get("stt_api_key")
     with pytest.raises(ValueError): store.set("stt_api_key", "opaque")
     assert [call[2] for call in keys.calls] == ["llm_api_key"] * 3
+    assert [call[2] for call in keys.calls] == ["llm_api_key"] * 3
+
+
+def test_allowed_hotkeys_constant():
+    assert ALLOWED_HOTKEYS == (
+        "F8",
+        "F9",
+        "F10",
+        "F12",
+        "Ctrl+Alt+Space",
+        "Ctrl+Shift+D",
+    )
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("f8", "F8"),
+    ("F8", "F8"),
+    ("  f9  ", "F9"),
+    ("f10", "F10"),
+    ("F12", "F12"),
+    ("ctrl+alt+space", "Ctrl+Alt+Space"),
+    ("CTRL+SHIFT+D", "Ctrl+Shift+D"),
+])
+def test_normalize_hotkey_valid(raw, expected):
+    assert normalize_hotkey(raw) == expected
+
+
+@pytest.mark.parametrize("invalid", [
+    "",
+    "   ",
+    "F1",
+    "Ctrl+Shift+Z",
+    "enter",
+    "invalid",
+])
+def test_normalize_hotkey_invalid(invalid):
+    with pytest.raises(SettingsError, match="Kısayol desteklenmiyor"):
+        normalize_hotkey(invalid)
+
+
+def test_legacy_hotkey_migration(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"hotkey": "f8"}), encoding="utf-8")
+    loaded = SettingsStore(path).load()
+    assert loaded.hotkey == "F8"
+
+    # Invalid hotkey in config causes SettingsError
+    path.write_text(json.dumps({"hotkey": "f1_invalid"}), encoding="utf-8")
+    with pytest.raises(SettingsError, match="Ayar dosyası okunamadı veya geçersiz"):
+        SettingsStore(path).load()
+

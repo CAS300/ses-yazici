@@ -5,7 +5,9 @@ import tkinter as tk
 from dataclasses import replace
 from tkinter import messagebox, ttk
 
-from settings import AppSettings, LlmSettings, SttSettings, validate_settings
+from app_logger import open_log_file
+from controller import AppState
+from settings import ALLOWED_HOTKEYS, AppSettings, LlmSettings, SttSettings, validate_settings
 from ui_tokens import COLORS, FONT, SPACING
 
 FLOW_MODE_LABELS = {
@@ -26,7 +28,7 @@ class SettingsViewModel:
     def build(self, values: dict[str, str]) -> AppSettings:
         result = replace(
             self.settings,
-            hotkey=values["hotkey"].strip().lower(),
+            hotkey=values["hotkey"].strip(),
             record_mode=values["record_mode"],
             flow_mode=FLOW_MODE_LABELS[values["flow_mode"]],
             stt=SttSettings(local_model=values["local_model"], language="tr"),
@@ -37,7 +39,7 @@ class SettingsViewModel:
 
 class AppGui:
     FIELD_SPECS = (
-        ("Global kısayol", "hotkey", ()),
+        ("Global kısayol", "hotkey", ALLOWED_HOTKEYS),
         ("Kayıt modu", "record_mode", ("toggle", "push_to_talk")),
         ("Çalışma modu", "flow_mode", tuple(FLOW_MODE_LABELS)),
         ("Yerel STT modeli", "local_model", ("tiny", "base")),
@@ -104,14 +106,21 @@ class AppGui:
         card.pack(fill="both", expand=True, padx=SPACING["xl"], pady=SPACING["xl"])
         ttk.Label(card, text="Ses Yazıcı", style="Card.TLabel", font=("Segoe UI Semibold", 16)).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+
+        saved_key = self.credentials.get("llm_api_key") or ""
         defaults = {
-            "hotkey": settings.hotkey, "record_mode": settings.record_mode,
-            "flow_mode": FLOW_MODE_NAMES[settings.flow_mode], "local_model": settings.stt.local_model,
-            "llm_url": settings.llm.base_url, "llm_model": settings.llm.model, "llm_key": "",
+            "hotkey": settings.hotkey,
+            "record_mode": settings.record_mode,
+            "flow_mode": FLOW_MODE_NAMES[settings.flow_mode],
+            "local_model": settings.stt.local_model,
+            "llm_url": settings.llm.base_url,
+            "llm_model": settings.llm.model,
+            "llm_key": saved_key,
         }
         for row, (label, name, choices) in enumerate(self.FIELD_SPECS, 1):
             ttk.Label(card, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=5)
-            var = tk.StringVar(value=defaults[name]); self.vars[name] = var
+            var = tk.StringVar(value=defaults[name])
+            self.vars[name] = var
             if choices:
                 widget = ttk.Combobox(card, textvariable=var, values=choices, state="readonly")
                 widget.grid(row=row, column=1, sticky="ew", pady=5)
@@ -135,8 +144,13 @@ class AppGui:
         ttk.Label(card, textvariable=self.status_var, style="Card.TLabel").grid(row=status_row, column=1, sticky="w", pady=(14, 5))
         buttons = ttk.Frame(card, style="Card.TFrame")
         buttons.grid(row=status_row + 1, column=0, columnspan=2, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Test Et", style="Secondary.TButton", command=self.test_action).pack(side="left", padx=5)
-        ttk.Button(buttons, text="Kaydet", style="Primary.TButton", command=self.save).pack(side="left")
+
+        self.log_btn = ttk.Button(buttons, text="Logları Aç", style="Secondary.TButton", command=self.open_logs, takefocus=True)
+        self.log_btn.pack(side="left", padx=5)
+        self.test_btn = ttk.Button(buttons, text="Test Et", style="Secondary.TButton", command=self.test_action, takefocus=True)
+        self.test_btn.pack(side="left", padx=5)
+        self.save_btn = ttk.Button(buttons, text="Kaydet", style="Primary.TButton", command=self.save, takefocus=True)
+        self.save_btn.pack(side="left")
 
     def toggle_key_visibility(self):
         entry = self.widgets["llm_key"]
@@ -147,14 +161,17 @@ class AppGui:
     def values(self):
         return {name: var.get() for name, var in self.vars.items()}
 
+    def open_logs(self):
+        import app_logger
+        app_logger.open_log_file()
+
     def save(self):
         try:
-            key_value = self.vars["llm_key"].get()
+            key_value = self.vars["llm_key"].get().strip()
             if key_value:
                 self.credentials.set("llm_api_key", key_value)
-                self.vars["llm_key"].set("")
-                if str(self.widgets["llm_key"].cget("show")) != "*":
-                    self.toggle_key_visibility()
+            else:
+                self.credentials.delete("llm_api_key")
             settings = self.vm.build(self.values())
             self.controller.update_settings(settings)
             self.store.save(settings)
@@ -164,21 +181,38 @@ class AppGui:
             messagebox.showerror("Ayar hatası", str(exc))
 
     def test_action(self):
-        if self.controller.state.name == "LISTENING": self.controller.stop_recording()
-        else: self.controller.start_recording()
+        if self.controller.state == AppState.LISTENING:
+            self.controller.stop_recording()
+        else:
+            self.controller.start_recording()
 
-    def poll_events(self):
+    def poll_events(self, reschedule: bool = True):
         try:
-            while True: self.status_var.set(self.events.get_nowait().message)
-        except queue.Empty: pass
-        self.root.after(80, self.poll_events)
+            while True:
+                event = self.events.get_nowait()
+                self.status_var.set(event.message)
+                if event.state == AppState.LISTENING:
+                    self.test_btn.configure(text="Durdur", state="normal")
+                elif event.state in {AppState.TRANSCRIBING, AppState.CLEANING, AppState.INJECTING}:
+                    self.test_btn.configure(text="İşleniyor...", state="disabled")
+                elif event.state in {AppState.READY, AppState.WRITTEN, AppState.ERROR}:
+                    self.test_btn.configure(text="Test Et", state="normal")
+        except queue.Empty:
+            pass
+        if reschedule:
+            self.root.after(80, self.poll_events)
 
     def hide(self):
-        if self.tray: self.root.withdraw()
-        else: self.exit()
+        if self.tray:
+            self.root.withdraw()
+        else:
+            self.exit()
 
-    def show(self): self.root.after(0, self.root.deiconify)
+    def show(self):
+        self.root.after(0, self.root.deiconify)
+
     def exit(self):
         self.controller.shutdown()
-        if self.tray: self.tray.stop()
+        if self.tray:
+            self.tray.stop()
         self.root.after(0, self.root.destroy)
