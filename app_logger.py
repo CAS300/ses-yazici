@@ -51,13 +51,18 @@ def get_log_path() -> Path:
     return Path(__file__).resolve().parent / "app.log"
 
 
-def setup_logging(log_path: Path | None = None, level: int = logging.DEBUG) -> logging.Logger:
+def setup_logging(log_path: Path | None = None, level: int = logging.INFO) -> logging.Logger:
     """Uygulama genelinde RotatingFileHandler ile yapılandırılmış loglamayı başlatır."""
     path = Path(log_path) if log_path else get_log_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
+
+    # Gürültülü 3. parti kütüphanelerin loglarını sustur (yalnızca WARN ve ERROR göster)
+    noisy_modules = ["PIL", "httpcore", "httpx", "keyring", "urllib3", "faster_whisper", "ctranslate2"]
+    for mod in noisy_modules:
+        logging.getLogger(mod).setLevel(logging.WARNING)
 
     # Varsa eski RotatingFileHandler'ları temizle
     for h in list(root_logger.handlers):
@@ -67,8 +72,8 @@ def setup_logging(log_path: Path | None = None, level: int = logging.DEBUG) -> l
 
     file_handler = RotatingFileHandler(
         filename=str(path),
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
+        maxBytes=1 * 1024 * 1024,  # 1 MB sınır
+        backupCount=2,
         encoding="utf-8",
     )
     file_handler.setLevel(level)

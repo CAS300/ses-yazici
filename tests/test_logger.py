@@ -82,8 +82,8 @@ def test_setup_logging_rotating_handler(tmp_path):
     rotating_handlers = [h for h in root.handlers if isinstance(h, RotatingFileHandler)]
     assert len(rotating_handlers) >= 1
     handler = rotating_handlers[0]
-    assert handler.maxBytes == 5 * 1024 * 1024
-    assert handler.backupCount == 3
+    assert handler.maxBytes == 1 * 1024 * 1024
+    assert handler.backupCount == 2
 
 
 def test_open_log_file_existing(tmp_path):

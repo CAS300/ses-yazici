@@ -15,6 +15,8 @@ ALLOWED_HOTKEYS = (
     "F9",
     "F10",
     "F12",
+    "Ctrl+Shift+Q",
+    "Ctrl+Shift+Space",
     "Ctrl+Alt+Space",
     "Ctrl+Shift+D",
 )
