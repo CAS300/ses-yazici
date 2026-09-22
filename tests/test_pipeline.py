@@ -3,7 +3,8 @@ from dataclasses import replace
 
 import pytest
 
-from controller import AppController
+from audio_recorder import AudioClip
+from controller import AppController, AppState
 from settings import AppSettings
 from tests.test_controller import ImmediateThread, Recorder
 
@@ -26,6 +27,58 @@ def test_a4_a5_two_mode_pipeline_trace(mode,raw,cleaned,expected):
     c.start_recording(); c.stop_recording(); assert trace == expected
 
 
+def test_short_clip_skips_downstream_returns_ready_and_accepts_next_recording():
+    trace = []
+
+    class R(Recorder):
+        def __init__(self):
+            super().__init__(AudioClip(b"\0\0" * 100, 16000, 1))
+
+        def start(self, **kw):
+            trace.append("audio:start")
+            super().start(**kw)
+
+        def stop(self):
+            trace.append("audio:stop")
+            return super().stop()
+
+    class S:
+        def transcribe(self, wav_bytes, language):
+            trace.append("local-stt")
+            return "ham"
+
+    class C:
+        def clean(self, text):
+            trace.append("llm:clean")
+            return "temiz"
+
+    class I:
+        def paste(self, text):
+            trace.append("clipboard")
+
+    recorder = R()
+    controller = AppController(
+        recorder,
+        S(),
+        C(),
+        I(),
+        AppSettings(),
+        events=queue.Queue(),
+        thread_factory=ImmediateThread,
+    )
+
+    controller.start_recording()
+    controller.stop_recording()
+
+    assert trace == ["audio:start", "audio:stop"]
+    assert controller.state == AppState.READY
+
+    controller.start_recording()
+
+    assert recorder.starts == 2
+    assert controller.state == AppState.LISTENING
+
+
 def test_pipeline_logging_and_secret_redaction(tmp_path):
     import app_logger
     from audio_recorder import AudioRecorder
@@ -39,7 +92,7 @@ def test_pipeline_logging_and_secret_redaction(tmp_path):
 
     class MockStream:
         def __init__(self, callback): self.callback = callback
-        def start(self): self.callback(b"\0\0" * 100, 100, None, None)
+        def start(self): self.callback(b"\0\0" * 8000, 8000, None, None)
         def stop(self): pass
         def close(self): pass
 

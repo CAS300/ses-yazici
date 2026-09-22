@@ -62,8 +62,6 @@ class LocalWhisperTranscriber:
                     os.unlink(path)
                 except FileNotFoundError:
                     pass
-        if not text:
-            raise TranscriptionError("Transkripsiyon boş döndü.")
         return text
 
 def build_transcriber(settings: SttSettings) -> Transcriber:

@@ -9,8 +9,11 @@ from typing import Callable
 from audio_recorder import encode_wav
 from app_logger import get_logger
 from settings import AppSettings
+from transcriber import TranscriptionError
 
 logger = get_logger("controller")
+
+MIN_RECORDING_SECONDS = 0.3
 
 
 class AppState(Enum):
@@ -74,7 +77,7 @@ class AppController:
 
     def start_recording(self) -> None:
         with self._lock:
-            if self._shutdown or self._state != AppState.READY:
+            if self._shutdown or self._state not in {AppState.READY, AppState.ERROR}:
                 return
             self._state = AppState.LISTENING
         logger.info("Kayıt başlatılıyor.")
@@ -100,10 +103,28 @@ class AppController:
         try:
             logger.info("Pipeline işleme başladı.")
             clip = self.recorder.stop()
+            duration = (
+                len(clip.pcm_s16le) / (clip.sample_rate * clip.channels * 2)
+                if clip.sample_rate and clip.channels
+                else 0.0
+            )
+            if duration < MIN_RECORDING_SECONDS:
+                logger.info("Kısa kayıt işlenmeden atlandı.")
+                self._emit(AppState.READY)
+                return
             wav_bytes = encode_wav(clip)
-            raw = self.transcriber.transcribe(wav_bytes, language=self.settings.stt.language)
+            try:
+                raw = self.transcriber.transcribe(wav_bytes, language=self.settings.stt.language)
+            except TranscriptionError as exc:
+                if str(exc) != "Transkripsiyon boş döndü.":
+                    raise
+                logger.info("Konuşma algılanmadı; kayıt işlenmeden tamamlandı.")
+                self._emit(AppState.READY)
+                return
             if not raw.strip():
-                raise RuntimeError("Transkripsiyon boş")
+                logger.info("Konuşma algılanmadı; kayıt işlenmeden tamamlandı.")
+                self._emit(AppState.READY)
+                return
             output = raw
             if self.settings.flow_mode != "local_only":
                 if self.cleaner is None:

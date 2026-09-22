@@ -41,6 +41,29 @@ def test_local_is_lazy_joins_segments_and_removes_temp(monkeypatch):
     assert paths and not Path(paths[0]).exists()
 
 
+def test_empty_segments_return_blank_and_remove_temp(monkeypatch):
+    paths = []
+
+    class Model:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, path, language):
+            paths.append(path)
+            assert Path(path).exists()
+            return ([], {})
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Model))
+
+    assert LocalWhisperTranscriber("tiny").transcribe(b"RIFF", language="tr") == ""
+    assert paths and not Path(paths[0]).exists()
+
+
+def test_empty_audio_bytes_remain_an_error():
+    with pytest.raises(TranscriptionError, match="Ses verisi boş\\."):
+        LocalWhisperTranscriber("tiny").transcribe(b"", language="tr")
+
+
 def test_missing_local_extra_is_clear(monkeypatch):
     monkeypatch.setitem(sys.modules, "faster_whisper", None)
     with pytest.raises(TranscriptionError, match="requirements-local"):

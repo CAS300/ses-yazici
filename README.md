@@ -22,6 +22,10 @@ Yerel model olarak yalnız `tiny` ve varsayılan `base` desteklenir. Yerel Whisp
 
 Normal kullanımda `baslat.bat`, sabit sanal ortamdaki `pythonw.exe` ile terminalsiz başlatır. Başlatma hataları uygulama klasöründeki `error.log` dosyasına yazılır ve bir iletişim kutusuyla bildirilir. Çalışma anı logları ise `app.log` dosyasına debug düzeyinde akar.
 
+CMD penceresi göstermeden elle başlatmak için `baslat_arkaplan.vbs` dosyasına çift tıklayın. Script önce proje klasöründeki `.venv\Scripts\pythonw.exe` dosyasını, yoksa PATH üzerindeki `pythonw.exe` komutunu kullanır ve `main.py` dosyasını doğru çalışma dizininden açar.
+
+Windows oturumu açıldığında uygulamanın otomatik başlaması için `otomatik_baslat_kur.bat` dosyasına çift tıklayın. Script, kullanıcının `shell:startup` klasörüne `Ses Yazıcı.lnk` kısayolunu oluşturur veya günceller. Otomatik başlangıcı kaldırmak için `otomatik_baslat_kaldir.bat` dosyasını çalıştırın. Repo taşınırsa kurulum scriptini yeniden çalıştırın; üç script ile `main.py` aynı proje klasörü içinde tutulmalıdır.
+
 ## Anahtar ve veri sınırı
 
 Kombine mod yalnız 9Router LLM anahtarını kullanır. Ayar ekranındaki 9Router anahtarı CredentialStore'dan yüklenerek başlangıçta `show="*"` ile maskelenir; Göster/Gizle düğmesi değeri koruyarak görünürlüğü değiştirir. "Kaydet" butonuna basıldığında anahtar kutusu silinmez. Anahtar `config.json` içine yazılmaz; keyring üzerinden Windows Credential Manager içinde güvenle saklanır. Log dosyalarına (`app.log`) API anahtarları asla yazılmaz.
